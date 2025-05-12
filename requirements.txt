@@ -1,0 +1,5 @@
+# Core dependencies
+async-timeout>=4.0.3
+python-dotenv>=1.0.0
+# Web UI dependencies
+flask>=2.0.0
