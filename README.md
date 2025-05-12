@@ -55,7 +55,22 @@ pip install -e .
 
 ## Usage
 
-### Interactive Mode
+### Web User Interface
+
+Run the web-based UI to interact with the NVIDIA Sales Agent through your browser:
+
+```bash
+python web_ui.py
+```
+
+Then open your browser and navigate to `http://127.0.0.1:5000/` to access the interface.
+
+The web UI features:
+- Chat interface for asking questions about NVIDIA products
+- Real-time notifications showing which agents are being consulted
+- Agent activity log that displays the behind-the-scenes processing
+
+### Interactive Command Line Mode
 
 Run the agent in interactive mode to ask questions about NVIDIA products:
 
@@ -108,6 +123,19 @@ To enhance the quality of responses:
 1. Modify the `_generate_response` method in the `ProductCatalogAgent` class
 2. Enhance the information retrieval logic in `_retrieve_information`
 3. Update the confidence scoring algorithm in `_calculate_confidence`
+
+## Example Queries
+
+Try these example queries to test the system:
+
+- "What's the best NVIDIA GPU for gaming?"
+- "Tell me about the GeForce RTX 4090"
+- "Compare RTX professional GPUs with gaming GPUs"
+- "What NVIDIA solutions are available for AI training?"
+- "How does NVIDIA support self-driving cars?"
+- "Tell me about NVIDIA's cloud gaming service"
+- "What are the features of CUDA?"
+- "What networking solutions does NVIDIA offer?"
 
 ## Future Enhancements
 
