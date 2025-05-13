@@ -59,11 +59,31 @@ pip install -e .
 
 Run the web-based UI to interact with the NVIDIA Sales Agent through your browser:
 
+#### Option 1: Simple Start (Without Claude Integration)
+
 ```bash
 python web_ui.py
 ```
 
 Then open your browser and navigate to `http://127.0.0.1:5000/` to access the interface.
+
+#### Option 2: With Claude 3.7 Sonnet Integration
+
+For enhanced agent capabilities using Claude 3.7 Sonnet:
+
+1. Get an API key from [Anthropic](https://www.anthropic.com/)
+2. Use the convenience script:
+
+```bash
+./start_server.sh your_anthropic_api_key
+```
+
+Or set the environment variable manually:
+
+```bash
+export ANTHROPIC_API_KEY=your_anthropic_api_key
+python web_ui.py
+```
 
 The web UI features:
 - Chat interface for asking questions about NVIDIA products
@@ -99,6 +119,16 @@ python example.py
 ```
 
 This script runs through a series of test queries and shows how the architecture works.
+
+## Claude 3.7 Sonnet Integration
+
+When integrated with Claude 3.7 Sonnet, the system gains enhanced capabilities:
+
+1. **Smarter Agent Selection**: Claude analyzes user queries to determine which product agents are most relevant.
+2. **Intelligent Response Generation**: Each product agent uses Claude to generate more natural and comprehensive responses.
+3. **Advanced Response Synthesis**: The orchestrator uses Claude to combine information from multiple agents into coherent, unified answers.
+
+To use Claude integration, you need an API key from Anthropic. Without an API key, the system will fall back to rule-based agent selection and response generation.
 
 ## Extending the System
 

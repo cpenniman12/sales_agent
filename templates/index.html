@@ -262,7 +262,7 @@
         function processNotifications(notifications) {
             for (const notification of notifications) {
                 // Handle different notification types
-                if (notification.type === 'final_response') {
+                if (notification.type === 'final_response' || notification.type === 'response') {
                     // Remove typing indicator
                     const typingIndicator = document.getElementById('typing-indicator');
                     if (typingIndicator) {
@@ -270,7 +270,8 @@
                     }
                     
                     // Add agent response
-                    addMessage(notification.response, 'agent');
+                    const responseText = notification.response || notification.message;
+                    addMessage(responseText, 'agent');
                     
                     // End processing state
                     isProcessing = false;

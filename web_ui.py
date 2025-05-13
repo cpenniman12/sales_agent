@@ -1,155 +1,231 @@
+#!/usr/bin/env python3
 import asyncio
+import datetime
+import threading
+import uuid
+from collections import defaultdict
+from queue import Queue
 import json
 from flask import Flask, render_template, request, jsonify
+import os
 from threading import Thread
-from queue import Queue
 
-# Import our NVIDIA Sales Agent components
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv(verbose=True)
+    print("Loaded environment from .env file")
+except ImportError:
+    print("python-dotenv not installed, environment variables must be set manually")
+
+# Check if API key is available
+api_key = os.environ.get("ANTHROPIC_API_KEY")
+if api_key:
+    print("Found ANTHROPIC_API_KEY in environment variables")
+else:
+    print("="*80)
+    print("WARNING: ANTHROPIC_API_KEY environment variable not found.")
+    print("To use Claude for agent processing, please set your API key:")
+    print("  export ANTHROPIC_API_KEY=your_api_key_here")
+    print("="*80)
+
 from nvidia_sales_agent.orchestrator import OrchestratorAgent
 from nvidia_sales_agent.product_agent import ProductCatalogAgent
-from nvidia_sales_agent.ui_notifier import UINotifier
-
-# Import knowledge bases
-from nvidia_sales_agent.knowledge.geforce import GEFORCE_KNOWLEDGE
-from nvidia_sales_agent.knowledge.rtx_professional import RTX_PROFESSIONAL_KNOWLEDGE
-from nvidia_sales_agent.knowledge.datacenter import DATACENTER_KNOWLEDGE
-from nvidia_sales_agent.knowledge.cuda import CUDA_KNOWLEDGE
-from nvidia_sales_agent.knowledge.ai_platforms import AI_KNOWLEDGE
-from nvidia_sales_agent.knowledge.networking import NETWORKING_KNOWLEDGE
-from nvidia_sales_agent.knowledge.automotive import AUTOMOTIVE_KNOWLEDGE
-from nvidia_sales_agent.knowledge.cloud_gaming import CLOUD_GAMING_KNOWLEDGE
+from nvidia_sales_agent.claude_helper import ClaudeClient
 
 app = Flask(__name__)
 
-# Queue to store notifications for each session
-notification_queues = {}
+# In-memory storage for agent sessions
+agent_sessions = {}
 
-# Store the event loop for each session
-event_loops = {}
+# Define product domains
+product_domains = [
+    "GeForce Gaming GPUs",
+    "RTX Professional GPUs",
+    "NVIDIA Data Center Solutions",
+    "CUDA & Developer Tools",
+    "AI & Deep Learning Platforms",
+    "Networking & DPUs",
+    "Automotive & Self-Driving Tech",
+    "Cloud Gaming Services"
+]
 
-# Custom UI notifier that adds notifications to a queue
-class WebUINotifier(UINotifier):
-    def __init__(self, session_id):
+class UINotifier:
+    """
+    Handles notifying the UI of events via a notification queue.
+    """
+    def __init__(self, session_id, notification_queue):
         self.session_id = session_id
-        super().__init__(self._notification_callback)
-    
-    def _notification_callback(self, notification):
-        # Ensure session queue exists
-        if self.session_id not in notification_queues:
-            notification_queues[self.session_id] = Queue()
+        self.notification_queue = notification_queue
         
-        # Add notification to the queue
-        notification_queues[self.session_id].put(notification)
+    def notify(self, notification):
+        """Add a notification to the queue"""
+        notification["session_id"] = self.session_id
+        self.notification_queue.put(notification)
 
 class SalesAgentSession:
-    def __init__(self, session_id):
+    """
+    Manages a single user session with the sales agent system.
+    """
+    def __init__(self, session_id, notification_queue):
         self.session_id = session_id
-        self.ui_notifier = WebUINotifier(session_id)
-        self.orchestrator = OrchestratorAgent(self.ui_notifier)
-        self._initialize_agents()
+        self.notification_queue = notification_queue
+        self.ui_notifier = UINotifier(session_id, notification_queue)
         
-    def _initialize_agents(self):
-        # Create and register each product agent
-        agents = [
-            ("GeForce Gaming GPUs", GEFORCE_KNOWLEDGE),
-            ("RTX Professional GPUs", RTX_PROFESSIONAL_KNOWLEDGE),
-            ("NVIDIA Data Center Solutions", DATACENTER_KNOWLEDGE),
-            ("CUDA & Developer Tools", CUDA_KNOWLEDGE),
-            ("AI & Deep Learning Platforms", AI_KNOWLEDGE),
-            ("Networking & DPUs", NETWORKING_KNOWLEDGE),
-            ("Automotive & Self-Driving Tech", AUTOMOTIVE_KNOWLEDGE),
-            ("Cloud Gaming Services", CLOUD_GAMING_KNOWLEDGE)
-        ]
+        # Log initial session creation
+        self.ui_notifier.notify({
+            "type": "system",
+            "message": "Setting up NVIDIA Sales Agent...",
+            "timestamp": datetime.datetime.now().isoformat()
+        })
         
-        for agent_id, knowledge_base in agents:
-            agent = ProductCatalogAgent(agent_id, knowledge_base)
-            self.orchestrator.register_agent(agent_id, agent)
+    def create_agents(self):
+        """
+        Create product catalog agents and orchestrator
+        """
+        # Create Claude client
+        try:
+            # Try to create a Claude client
+            claude_client = ClaudeClient()
+            using_claude = True
+        except ValueError:
+            # Fallback if no API key is available
+            claude_client = None
+            using_claude = False
+            
+        # Create product catalog agents for each domain
+        agents = {}
+        for domain in product_domains:
+            agents[domain] = ProductCatalogAgent(domain, claude_client=claude_client)
+            
+        # Create orchestrator that will coordinate the agents
+        orchestrator = OrchestratorAgent(self.ui_notifier, claude_client=claude_client)
+        
+        # Register all agents with the orchestrator
+        for agent_id, agent in agents.items():
+            orchestrator.register_agent(agent_id, agent)
+            
+        self.orchestrator = orchestrator
+        
+        # Notify that setup is complete
+        if using_claude:
+            message = "NVIDIA Sales Agent ready with Claude integration"
+        else:
+            message = "NVIDIA Sales Agent ready (without Claude integration)"
+            
+        self.ui_notifier.notify({
+            "type": "system",
+            "message": message,
+            "timestamp": datetime.datetime.now().isoformat()
+        })
+        
+    async def process_query(self, query):
+        """
+        Process a user query through the orchestrator
+        """
+        return await self.orchestrator.process_query(query)
 
-# Store active agent sessions
-agent_sessions = {}
+# Queue to store notifications for each session
+notification_queues = defaultdict(Queue)
 
 @app.route('/')
 def index():
+    """Render the main page"""
     return render_template('index.html')
 
 @app.route('/api/session', methods=['POST'])
-def create_session():
-    # Generate session ID
-    import uuid
+def api_create_session():
+    """Create a new session"""
+    # Generate a session ID
     session_id = str(uuid.uuid4())
     
-    # Create agent session
-    agent_sessions[session_id] = SalesAgentSession(session_id)
-    
-    # Create notification queue
+    # Create notification queue for this session
     notification_queues[session_id] = Queue()
     
-    return jsonify({'session_id': session_id})
+    # Define function to initialize session with proper event loop
+    def init_session():
+        # Set up a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Create the session with the notification queue
+        session = SalesAgentSession(session_id, notification_queues[session_id])
+        session.create_agents()
+        
+        # Store the session
+        agent_sessions[session_id] = session
+    
+    # Run initialization in a separate thread
+    init_thread = Thread(target=init_session)
+    init_thread.start()
+    init_thread.join()  # Wait for initialization to complete
+    
+    return jsonify({"session_id": session_id})
 
 @app.route('/api/query', methods=['POST'])
-def process_query():
+def api_query():
+    """Process a user query"""
     data = request.json
     session_id = data.get('session_id')
     query = data.get('query')
     
-    if not session_id or session_id not in agent_sessions:
-        return jsonify({'error': 'Invalid session ID'}), 400
-    
-    if not query:
-        return jsonify({'error': 'Query is required'}), 400
-    
-    # Clear any old notifications
-    while not notification_queues[session_id].empty():
-        notification_queues[session_id].get()
-    
-    # Process the query asynchronously
-    def process_async():
-        # Get or create event loop for this thread
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+    if not session_id or not query:
+        return jsonify({
+            "error": "Missing session_id or query"
+        }), 400
         
-        # Store the loop for this session
-        event_loops[session_id] = loop
+    if session_id not in agent_sessions:
+        return jsonify({
+            "error": "Invalid session_id"
+        }), 404
         
-        # Process the query
-        agent_session = agent_sessions[session_id]
-        response = loop.run_until_complete(
-            agent_session.orchestrator.process_query(query)
-        )
+    # Process query asynchronously
+    def process():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        # Add final response to queue
+        session = agent_sessions[session_id]
+        response = loop.run_until_complete(session.process_query(query))
+        
+        # Add final response to notification queue
         notification_queues[session_id].put({
-            'type': 'final_response',
-            'response': response
+            "type": "response",
+            "message": response,
+            "session_id": session_id,
+            "timestamp": datetime.datetime.now().isoformat()
         })
+        
+    Thread(target=process).start()
     
-    # Start processing in a separate thread
-    thread = Thread(target=process_async)
-    thread.start()
-    
-    return jsonify({'status': 'processing'})
+    return jsonify({"status": "processing"})
 
 @app.route('/api/notifications', methods=['GET'])
-def get_notifications():
+def api_get_notifications():
+    """Get notifications for a session"""
     session_id = request.args.get('session_id')
     
-    if not session_id or session_id not in notification_queues:
-        return jsonify({'error': 'Invalid session ID'}), 400
-    
-    # Get all available notifications
+    if not session_id:
+        return jsonify({
+            "error": "Missing session_id"
+        }), 400
+        
+    if session_id not in notification_queues:
+        return jsonify({
+            "error": "Invalid session_id"
+        }), 404
+        
+    # Get all notifications from the queue
     notifications = []
-    while not notification_queues[session_id].empty():
-        notifications.append(notification_queues[session_id].get())
+    queue = notification_queues[session_id]
     
-    return jsonify({'notifications': notifications})
+    while not queue.empty():
+        notifications.append(queue.get())
+        
+    return jsonify({"notifications": notifications})
 
 if __name__ == '__main__':
-    # Ensure templates directory exists
-    import os
-    if not os.path.exists('templates'):
-        os.makedirs('templates')
+    # Ensure template directory exists
+    os.makedirs('templates', exist_ok=True)
     
-    app.run(debug=True)
+    # Run the app
+    app.run(debug=True, port=8000)
